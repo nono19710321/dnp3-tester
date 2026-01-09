@@ -1,0 +1,640 @@
+mod models;
+mod dnp3_service;
+mod dnp3_frame_layer;
+
+use axum::{
+    extract::{State},
+    http::HeaderMap,
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
+use rust_embed::RustEmbed;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::collections::HashMap;
+use tokio::sync::RwLock;
+use tower_http::trace::TraceLayer;
+
+use models::*;
+use dnp3_service::Dnp3Service;
+
+#[derive(RustEmbed)]
+#[folder = "frontend/"]
+struct Assets;
+
+#[derive(Clone)]
+struct AppState {
+    sessions: Arc<RwLock<HashMap<String, Arc<Dnp3Service>>>>,
+    log_store: Arc<dnp3_service::LogStore>,
+}
+
+// Helper to get session ID from headers
+fn get_session_id(headers: &HeaderMap) -> String {
+    headers
+        .get("X-Session-ID")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("default")
+        .to_string()
+}
+
+
+// Helper to get/create service for session
+async fn get_service(state: &AppState, session_id: &str) -> Arc<Dnp3Service> {
+    let mut sessions = state.sessions.write().await;
+    if let Some(service) = sessions.get(session_id) {
+        return service.clone();
+    }
+    
+    // Create new service sharing global logs
+    // NOTE: This enables "Global View" logging (all tabs see all logs)
+    let service = Arc::new(Dnp3Service::new(state.log_store.clone()));
+    sessions.insert(session_id.to_string(), service.clone());
+    service
+}
+
+// Open browser in app mode (no address bar/toolbar)
+fn open_browser_app_mode(url: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        // Windows: Try Chrome, Edge, Firefox in app mode
+        let chrome_paths = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        ];
+        
+        let edge_path = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe";
+        
+        // Try Chrome first
+        for chrome in &chrome_paths {
+            if std::path::Path::new(chrome).exists() {
+                if let Ok(_) = std::process::Command::new(chrome)
+                    .arg(format!("--app={}", url))
+                    .spawn() {
+                    return;
+                }
+            }
+        }
+        
+        // Try Edge
+        if std::path::Path::new(edge_path).exists() {
+            if let Ok(_) = std::process::Command::new(edge_path)
+                .arg(format!("--app={}", url))
+                .spawn() {
+                return;
+            }
+        }
+        
+        // Fallback to default browser
+        let _ = open::that(url);
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        // macOS: Try Chrome, then Safari in app-like mode
+        if let Ok(_) = std::process::Command::new("open")
+            .arg("-a")
+            .arg("Google Chrome")
+            .arg("--args")
+            .arg(format!("--app={}", url))
+            .spawn() {
+            return;
+        }
+        
+        // Fallback to default browser
+        let _ = open::that(url);
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        // Linux: Try Chrome/Chromium in app mode
+        let browsers = ["google-chrome", "chromium", "chromium-browser"];
+        
+        for browser in &browsers {
+            if let Ok(_) = std::process::Command::new(browser)
+                .arg(format!("--app={}", url))
+                .spawn() {
+                return;
+            }
+        }
+        
+        // Fallback to default browser
+        let _ = open::that(url);
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    // Initialize LogStore (Shared Global)
+    let log_store = Arc::new(dnp3_service::LogStore::new());
+    
+    // Initialize Sessions Map
+    let sessions = Arc::new(RwLock::new(HashMap::new()));
+    
+    // Initialize tracing with custom layer
+    use tracing_subscriber::prelude::*;
+    
+    // Configure logging/tracing
+    let frame_layer = dnp3_frame_layer::Dnp3FrameLayer::new(
+        log_store.raw_frames.clone(),
+        log_store.logs.clone(),
+        log_store.frame_counter.clone(),
+        log_store.log_counter.clone()
+    );
+    
+    // Set up tracing subscriber with EnvFilter and our custom layer
+    // Use EnvFilter - dnp3=trace to see raw hex frames
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,dnp3=trace"));
+    
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)  // Hide target for cleaner output
+        )
+        .with(filter)
+        .with(frame_layer)
+        .init();
+
+    let state = AppState { sessions, log_store };
+
+    // Auto-apply disk `default_config.json` to the built-in `default` session
+    // so the outstation has a point table even if no browser session applied it.
+    // This reads from the current working directory first (executable run dir),
+    // then falls back to frontend/default_config.json.
+    // Try reading default_config.json from CWD, then frontend/ if absent
+    let cfg_text = match tokio::fs::read_to_string("default_config.json").await {
+        Ok(s) => Some(s),
+        Err(_) => match tokio::fs::read_to_string("frontend/default_config.json").await {
+            Ok(s2) => Some(s2),
+            Err(_) => None,
+        },
+    };
+
+    if let Some(cfg_text) = cfg_text {
+        match serde_json::from_str::<DeviceConfiguration>(&cfg_text) {
+            Ok(dev_cfg) => {
+                let svc = get_service(&state, "default").await;
+                svc.update_config(dev_cfg).await;
+                println!("📝 Auto-applied default_config.json to session 'default'");
+            }
+            Err(e) => println!("⚠️ Failed to parse default_config.json: {}", e),
+        }
+    }
+
+    // Build router
+    let app = Router::new()
+        .route("/", get(index_handler))
+        .route("/styles.css", get(|| serve_asset("styles.css")))
+        .route("/app.js", get(|| serve_asset("app.js")))
+        .route("/default_config.json", get(|| serve_asset("default_config.json")))
+        .route("/api/connect", post(connect_handler))
+        .route("/api/disconnect", post(disconnect_handler))
+        .route("/api/config/apply", post(apply_config_handler))
+        .route("/api/data", get(get_data_handler))
+        .route("/api/logs", get(get_logs_handler))
+        .route("/api/frames", get(get_frames_handler)) // NEW: Raw frames
+        .route("/api/host_ip", get(host_ip_handler))
+        .route("/api/read", post(read_handler)) // Manual read for Master
+        .route("/api/control", post(control_handler))
+        .route("/api/datapoints/add", post(add_datapoint_handler)) // NEW: Add data point
+        .route("/api/datapoints/clear", post(clear_datapoints_handler)) // NEW: Clear all
+        .with_state(state)
+        .layer(TraceLayer::new_for_http());
+
+    let addr = "127.0.0.1:8080";
+    println!("\n🚀 DNP3 Tester starting at http://{}\n", addr);
+    println!("📡 IEEE 1815-2012 Compliant");
+    println!("🔧 Supports: TCP | UDP | TLS | Serial\n");
+
+    // Auto-open browser in app mode (no address bar/toolbar)
+    let url = format!("http://{}", addr);
+    open_browser_app_mode(&url);
+
+    // Start server
+    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn index_handler() -> impl IntoResponse {
+    serve_asset("index.html").await
+}
+
+async fn serve_asset(path: &str) -> Response {
+    // Special-case `default_config.json` to allow overriding the embedded
+    // asset by placing `default_config.json` beside the executable (CWD)
+    // or in a `frontend/` folder. This lets users drop a config next to
+    // the binary without embedding frontend assets into the executable.
+    if path == "default_config.json" {
+        // 1) Try current working directory (e.g. where the executable is run)
+        if let Ok(cwd) = std::env::current_dir() {
+            let p = cwd.join("default_config.json");
+            if p.exists() {
+                if let Ok(body) = tokio::fs::read(&p).await {
+                    return Response::builder()
+                        .header("content-type", "application/json")
+                        .body(body.into())
+                        .unwrap();
+                }
+            }
+        }
+
+        // 2) Fallback: try `frontend/default_config.json` for dev setups
+        if let Ok(body) = tokio::fs::read("frontend/default_config.json").await {
+            return Response::builder()
+                .header("content-type", "application/json")
+                .body(body.into())
+                .unwrap();
+        }
+        // If neither exists, fall through to embedded asset below
+    }
+
+    match Assets::get(path) {
+        Some(content) => {
+            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            let body = content.data.into_owned();
+            Response::builder()
+                .header("content-type", mime.as_ref())
+                .body(body.into())
+                .unwrap()
+        }
+        None => Response::builder()
+            .status(404)
+            .body("Not Found".into())
+            .unwrap(),
+    }
+}
+
+#[derive(Deserialize)]
+struct ConnectRequest {
+    mode: String,
+    ip: String,
+    port: u16,
+    #[serde(rename = "localAddr")]
+    local_addr: u16,
+    #[serde(rename = "remoteAddr")]
+    remote_addr: u16,
+}
+
+#[derive(Serialize)]
+struct ApiResponse {
+    success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+async fn connect_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<ConnectRequest>,
+) -> Json<ApiResponse> {
+    let session_id = get_session_id(&headers);
+    println!("📡 Connect request [Session {}]: mode={}, {}:{}", session_id, req.mode, req.ip, req.port);
+
+    let service = get_service(&state, &session_id).await;
+
+    // Normalize IP: if empty, choose a sensible default depending on role.
+    let ip_address = if req.ip.trim().is_empty() {
+        if req.mode == "outstation" { "0.0.0.0".to_string() } else { "127.0.0.1".to_string() }
+    } else {
+        req.ip.clone()
+    };
+
+        // If the session has no datapoints yet, try auto-loading a default
+        // config from disk (CWD `default_config.json` or `frontend/default_config.json`).
+        {
+            let existing = service.get_data().await;
+            if existing.is_empty() {
+                let cfg_text = match tokio::fs::read_to_string("default_config.json").await {
+                    Ok(s) => Some(s),
+                    Err(_) => match tokio::fs::read_to_string("frontend/default_config.json").await {
+                        Ok(s2) => Some(s2),
+                        Err(_) => None,
+                    },
+                };
+
+                if let Some(cfg_text) = cfg_text {
+                    if let Ok(dev_cfg) = serde_json::from_str::<DeviceConfiguration>(&cfg_text) {
+                        service.update_config(dev_cfg).await;
+                        println!("📝 Auto-loaded default_config.json for session {}", session_id);
+                    } else {
+                        println!("⚠️ Failed to parse default_config.json when auto-loading for session {}",&session_id);
+                    }
+                }
+            }
+        }
+
+        let config = Configuration {
+        role: if req.mode == "master" {
+            DeviceRole::Master
+        } else {
+            DeviceRole::Outstation
+        },
+        connection_type: ConnectionType::TcpClient,
+        ip_address,
+        port: req.port,
+        local_address: req.local_addr,
+        remote_address: req.remote_addr,
+        device_config: None,
+        serial_port: None,
+        baud_rate: None,
+    };
+
+    let result = match config.role {
+        DeviceRole::Master => service.start_master(&config).await,
+        DeviceRole::Outstation => service.start_outstation(&config).await,
+    };
+
+    match result {
+        Ok(_) => Json(ApiResponse {
+            success: true,
+            error: None,
+        }),
+        Err(e) => Json(ApiResponse {
+            success: false,
+            error: Some(e),
+        }),
+    }
+}
+
+async fn apply_config_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(config): Json<DeviceConfiguration>,
+) -> Json<ApiResponse> {
+    let session_id = get_session_id(&headers);
+    println!("📝 Applying device configuration [Session {}]", session_id);
+    
+    let service = get_service(&state, &session_id).await;
+    service.update_config(config).await;
+    
+    Json(ApiResponse {
+        success: true,
+        error: None,
+    })
+}
+
+async fn disconnect_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Json<ApiResponse> {
+    let session_id = get_session_id(&headers);
+    println!("🔌 Disconnect request [Session {}]", session_id);
+    
+    let service = get_service(&state, &session_id).await;
+    service.disconnect().await;
+
+    Json(ApiResponse {
+        success: true,
+        error: None,
+    })
+}
+
+#[derive(Serialize)]
+struct SerializedDataPoint {
+    #[serde(rename = "type")]
+    point_type: String,
+    index: u16,
+    name: String,
+    value: f64,
+    quality: String,
+    timestamp: i64,
+}
+
+#[derive(Serialize)]
+struct Stats {
+    tx: u32,
+    rx: u32,
+    errors: u32,
+}
+
+#[derive(Serialize)]
+struct DataResponse {
+    points: Vec<SerializedDataPoint>,
+    stats: Stats,
+    logs: Vec<String>,
+}
+
+async fn get_data_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Json<DataResponse> {
+    let session_id = get_session_id(&headers);
+    // Silent lookup: don't create service just for polling if not exists?
+    // Actually, get_service creates if missing. This ensures session persistence.
+    let service = get_service(&state, &session_id).await;
+    
+    let points = service.get_data().await;
+    let stats = service.get_stats().await;
+    
+    let serialized_points: Vec<SerializedDataPoint> = points.iter().map(|p| {
+        SerializedDataPoint {
+            point_type: format!("{:?}", p.point_type),
+            index: p.index,
+            name: p.name.clone(),
+            value: p.value,
+            quality: format!("{:?}", p.quality),
+            timestamp: p.timestamp.timestamp_millis(),
+        }
+    }).collect();
+    
+    Json(DataResponse {
+        points: serialized_points,
+        stats: Stats {
+            tx: stats.tx_count,
+            rx: stats.rx_count,
+            errors: stats.error_count,
+        },
+        logs: vec![],
+    })
+}
+
+// Manual read handler (Master only)
+async fn read_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Json<serde_json::Value> {
+    let session_id = get_session_id(&headers);
+    let service = get_service(&state, &session_id).await;
+
+    match service.read_all().await {
+        Ok(_) => Json(serde_json::json!({
+            "success": true,
+            "message": "Read completed"
+        })),
+        Err(e) => Json(serde_json::json!({
+            "success": false,
+            "error": e
+        }))
+    }
+}
+
+#[derive(Deserialize)]
+struct ControlRequest {
+    point_type: String, 
+    index: u16,
+    value: f64,
+    #[serde(default)]
+    op_mode: String,
+}
+
+#[derive(Serialize)]
+struct ControlResponse {
+    status: String,
+    message: String,
+}
+
+async fn control_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<ControlRequest>,
+) -> Json<ControlResponse> {
+    let session_id = get_session_id(&headers);
+    let service = get_service(&state, &session_id).await;
+
+    println!("🎮 Control Request [Session {}]: {}[{}], Val={}, Mode={}", session_id, req.point_type, req.index, req.value, req.op_mode);
+    
+    // Parse point type
+    let point_type = match req.point_type.as_str() {
+        "BinaryOutput" => DataPointType::BinaryOutput,
+        "AnalogOutput" => DataPointType::AnalogOutput,
+        _ => {
+            return Json(ControlResponse {
+                status: "error".to_string(),
+                message: "Unsupported point type".to_string(),
+            });
+        }
+    };
+    
+    // Execute control through DNP3
+    let result = service.execute_control(point_type, req.index, req.value, req.op_mode).await;
+    
+    match result {
+        Ok(msg) => Json(ControlResponse {
+            status: "success".to_string(),
+            message: msg,
+        }),
+        Err(e) => Json(ControlResponse {
+            status: "error".to_string(),
+            message: e,
+        }),
+    }
+}
+
+#[derive(Serialize)]
+struct LogsResponse {
+    logs: Vec<SerializedLogEntry>,
+}
+
+#[derive(Serialize)]
+struct SerializedLogEntry {
+    id: u64,
+    timestamp: i64,
+    direction: String,
+    message: String,
+}
+
+async fn get_logs_handler(State(state): State<AppState>) -> Json<LogsResponse> {
+    let logs = state.log_store.logs.read().await;
+    
+    let serialized: Vec<SerializedLogEntry> = logs.iter().map(|log| {
+        SerializedLogEntry {
+            id: log.id,
+            timestamp: log.timestamp.timestamp_millis(),
+            direction: log.direction.clone(),
+            message: log.message.clone(),
+        }
+    }).collect();
+    
+    Json(LogsResponse {
+        logs: serialized,
+    })
+}
+
+async fn get_frames_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let frames = state.log_store.raw_frames.read().await;
+    let frames_vec: Vec<_> = frames.iter().cloned().collect();
+    Json(serde_json::json!({ "frames": frames_vec }))
+}
+
+async fn host_ip_handler() -> Json<serde_json::Value> {
+    // Best-effort local IP detection: create an outbound UDP socket to a public IP
+    // and read the local socket address. This does not send packets to the remote host.
+    let ip = local_outbound_ip().unwrap_or_else(|| "".to_string());
+    Json(serde_json::json!({ "ip": ip }))
+}
+
+fn local_outbound_ip() -> Option<String> {
+    // Try IPv4 first
+    if let Ok(sock) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        if sock.connect("8.8.8.8:80").is_ok() {
+            if let Ok(local_addr) = sock.local_addr() {
+                return Some(local_addr.ip().to_string());
+            }
+        }
+    }
+    None
+}
+
+// Add Data Point Handler
+#[derive(Deserialize)]
+struct AddDataPointRequest {
+    point_type: String,
+    index: u16,
+    name: String,
+}
+
+async fn add_datapoint_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<AddDataPointRequest>,
+) -> Json<ApiResponse> {
+    let session_id = get_session_id(&headers);
+    println!("➕ Add DataPoint Request [Session {}]: {} [{}] - {}", 
+        session_id, req.point_type, req.index, req.name);
+    
+    let service = get_service(&state, &session_id).await;
+    
+    // Parse point type
+    let point_type = match req.point_type.as_str() {
+        "BinaryInput" => DataPointType::BinaryInput,
+        "BinaryOutput" => DataPointType::BinaryOutput,
+        "AnalogInput" => DataPointType::AnalogInput,
+        "AnalogOutput" => DataPointType::AnalogOutput,
+        "Counter" => DataPointType::Counter,
+        _ => {
+            return Json(ApiResponse {
+                success: false,
+                error: Some(format!("Invalid point type: {}", req.point_type)),
+            });
+        }
+    };
+    
+    match service.add_datapoint(point_type, req.index, req.name).await {
+        Ok(_) => Json(ApiResponse {
+            success: true,
+            error: None,
+        }),
+        Err(e) => Json(ApiResponse {
+            success: false,
+            error: Some(e),
+        }),
+    }
+}
+
+// Clear All Data Points Handler
+async fn clear_datapoints_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Json<ApiResponse> {
+    let session_id = get_session_id(&headers);
+    println!("🗑️  Clear All DataPoints [Session {}]", session_id);
+    
+    let service = get_service(&state, &session_id).await;
+    service.clear_datapoints().await;
+    
+    Json(ApiResponse {
+        success: true,
+        error: None,
+    })
+}
