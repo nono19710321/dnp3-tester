@@ -45,7 +45,5 @@ __pycache__/
 /frontend/*
 !/frontend/default_config.json
 
-# Keep source and configuration directories tracked
-/src/
-/configs/
-/target
+# Keep configuration directory tracked (explicitly allow configs)
+!/configs/

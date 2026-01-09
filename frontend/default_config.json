@@ -1,0 +1,294 @@
+{
+  "binary_inputs": [
+    {
+      "index": 10,
+      "name": "Abnormal Operator Settings",
+      "description": "This flag shows that the operator has the ACR in an abnormal state such as “work tag applied”. This means that it will operate differently to its normal mode of operation."
+    },
+    {
+      "index": 1,
+      "name": "ACR Tripped (open)",
+      "description": "These are repeats of the mechanism travel switches. When the ACR is disconnected from the control cubicle they are both cleared."
+    },
+    {
+      "index": 2,
+      "name": "ACR Closed",
+      "description": "These are repeats of the mechanism travel switches. When the ACR is disconnected from the control cubicle they are both cleared."
+    },
+    {
+      "index": 3,
+      "name": "Controller Mode",
+      "description": "The controller is either in LOCAL or Remote Controller Mode. This affects the closing command the permission to set/remove work tag."
+    },
+    {
+      "index": 4,
+      "name": "Maintenance Required",
+      "description": "The controller has detected one or more conditions which require maintenance. This point cannot become Set until at least five minutes after controller start."
+    },
+    {
+      "index": 5,
+      "name": "Work Tag",
+      "description": "The controller can have a work tag. This affects the closing command"
+    },
+    {
+      "index": 6,
+      "name": "Prot A Active",
+      "description": "Only one protection group is active at any one time."
+    },
+    {
+      "index": 7,
+      "name": "Prot B Active",
+      "description": "Only one protection group is active at any one time."
+    },
+    {
+      "index": 16,
+      "name": "Earth / Ground Protection Enabled",
+      "description": "500ms"
+    },
+    {
+      "index": 17,
+      "name": "SEF/SGF Protection Enabled",
+      "description": "500ms"
+    },
+    {
+      "index": 18,
+      "name": "Auto Reclose",
+      "description": "500ms"
+    },
+    {
+      "index": 21,
+      "name": "Loss of Phase Protection",
+      "description": "500ms"
+    },
+    {
+      "index": 24,
+      "name": "Protection enable",
+      "description": "500ms"
+    },
+    {
+      "index": 26,
+      "name": "Power Flow Direction (Source and Load Bushings)",
+      "description": "The power flow direction (source/load designation) is determined by the user. Refer to the Power Flow Direction binary output for more information"
+    },
+    {
+      "index": 28,
+      "name": "Protection Data Valid",
+      "description": "This shows that the protection sequence is over and the other flags are set. This could be used to drive an operator alarm at the SCADA system to alert him to the fact that a protection sequence has occurred. Note that operator trip alone does not cause a \"protection data valid\" Event time is the time of lockout or reclaim."
+    },
+    {
+      "index": 36,
+      "name": "Operator Trip",
+      "description": "One flag only because operator trip forces lockout. Event time is the time of the trip"
+    },
+    {
+      "index": 37,
+      "name": "Phase Over Current Trip",
+      "description": "10ms"
+    },
+    {
+      "index": 38,
+      "name": "Earth / Ground Over Current Trip",
+      "description": "10ms"
+    },
+    {
+      "index": 39,
+      "name": "SEF/SGF Over Current Trip",
+      "description": "10ms"
+    },
+    {
+      "index": 40,
+      "name": "Sequence Advance",
+      "description": "10ms"
+    },
+    {
+      "index": 57,
+      "name": "Close Isolate",
+      "description": "Shows the state of the Trip & Close isolate switches on the control panel"
+    },
+    {
+      "index": 58,
+      "name": "Trip Isolate",
+      "description": "Shows the state of the Trip & Close isolate switches on the control panel"
+    },
+    {
+      "index": 59,
+      "name": "Locked",
+      "description": "Shows that the ACR is mechanically and electrically locked in the open position. Not supported on the N-Series where it will always be zero."
+    },
+    {
+      "index": 60,
+      "name": "ACR Memory Data Invalid",
+      "description": "Shows that the controller has retrieved the data from the ACR memory. When invalid the switchgear attributes and the gas pressure are zeroed,"
+    },
+    {
+      "index": 61,
+      "name": "Auxiliary Supply Fail"
+    },
+    {
+      "index": 62,
+      "name": "Switchgear Connection",
+      "description": "Shows that the controller has retrieved the data from the ACR memory. When invalid the switchgear attributes and the gas pressure are zeroed,"
+    },
+    {
+      "index": 63,
+      "name": "SF6 Gas Pressure Low or Invalid",
+      "description": "Only set when switchgear is connected and ACR memory data is valid and switchgear type has SF6."
+    },
+    {
+      "index": 64,
+      "name": "Battery Supply"
+    },
+    {
+      "index": 65,
+      "name": "Contacts Life Low"
+    },
+    {
+      "index": 67,
+      "name": "Capacitor Charge Failure",
+      "description": "The Trip/Close Capacitors have failed to charge"
+    },
+    {
+      "index": 68,
+      "name": "Mechanism Failure",
+      "description": "The switchgear has failed to Trip or Close electrically"
+    },
+    {
+      "index": 100,
+      "name": "Auxiliary Supply Fail (Delayed)"
+    },
+    {
+      "index": 110,
+      "name": "Work Tag Trip",
+      "description": "One flag only provided because a work tag trip forces lockout. Event time is the time of the pickup."
+    },
+    {
+      "index": 132,
+      "name": "Auto Changeover Enable",
+      "description": "Turn ACO on/off"
+    },
+    {
+      "index": 133,
+      "name": "Auto Changeover Mode"
+    },
+    {
+      "index": 137,
+      "name": "Output Control Mode"
+    }
+  ],
+  "binary_outputs": [
+    {
+      "index": 3,
+      "name": "ACR Control",
+      "description": "远方分合闸控制"
+    }
+  ],
+  "analog_inputs": [
+    {
+      "index": 0,
+      "name": "A-Phase Current",
+      "unit": "1A"
+    },
+    {
+      "index": 1,
+      "name": "B-Phase Current",
+      "unit": "1A"
+    },
+    {
+      "index": 2,
+      "name": "C-Phase Current",
+      "unit": "1A"
+    },
+    {
+      "index": 3,
+      "name": "(Earth / Ground) Current",
+      "unit": "1A"
+    },
+    {
+      "index": 4,
+      "name": "System kVA",
+      "unit": "1 kVA"
+    },
+    {
+      "index": 5,
+      "name": "System kVAR",
+      "unit": "1 kVAR"
+    },
+    {
+      "index": 12,
+      "name": "Protection Group that was in service at the start of the sequence 0=Group A0=Group A 1=Group B1=Group B ... 9=Group J9=Group J",
+      "unit": "1"
+    },
+    {
+      "index": 13,
+      "name": "Ai Phase-(Earth / Ground) Voltage",
+      "unit": "1 V"
+    },
+    {
+      "index": 14,
+      "name": "Bi Phase-(Earth / Ground) Voltage",
+      "unit": "1 V"
+    },
+    {
+      "index": 15,
+      "name": "Ci Phase-(Earth / Ground) Voltage",
+      "unit": "1 V"
+    },
+    {
+      "index": 16,
+      "name": "Ax Phase-(Earth / Ground) Volts",
+      "unit": "1 V"
+    },
+    {
+      "index": 17,
+      "name": "Bx Phase-(Earth / Ground) Volts",
+      "unit": "1 V"
+    },
+    {
+      "index": 18,
+      "name": "Cx Phase-(Earth / Ground) Volts",
+      "unit": "1 V"
+    },
+    {
+      "index": 26,
+      "name": "System Power Factor",
+      "unit": "0.1"
+    },
+    {
+      "index": 27,
+      "name": "Gas Pressure, kPaq.",
+      "unit": "1 kPaG"
+    },
+    {
+      "index": 33,
+      "name": "I Contact Life",
+      "unit": "0.001"
+    },
+    {
+      "index": 34,
+      "name": "II Contact Life",
+      "unit": "0.001"
+    },
+    {
+      "index": 35,
+      "name": "III Contact Life",
+      "unit": "0.001"
+    },
+    {
+      "index": 36,
+      "name": "Protection setting selection 0 = Group A 1 = Group B ... 9 = Group J",
+      "unit": "1"
+    },
+    {
+      "index": 39,
+      "name": "Received message length error",
+      "unit": "1"
+    },
+    {
+      "index": 40,
+      "name": "Received message CRC error",
+      "unit": "1"
+    }
+  ],
+  "analog_outputs": [],
+  "counters": []
+}
