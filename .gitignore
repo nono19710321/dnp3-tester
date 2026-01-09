@@ -1,0 +1,51 @@
+# macOS
+.DS_Store
+
+# Rust build artifacts
+/target/
+
+# Release builds and packaged artifacts
+/release/
+/release-windows/
+*.zip
+
+# Windows executables
+*.exe
+
+# Build objects
+*.o
+*.obj
+*.dll
+*.so
+*.dylib
+
+# Python virtualenv
+.venv/
+__pycache__/
+*.pyc
+
+# Editor/IDE
+.vscode/
+.idea/
+
+# Binary/data files
+*.xlsx
+*.p12
+*.pem
+*.key
+
+# Logs
+*.log
+
+# Documentation: ignore markdown except README.md
+*.md
+!README.md
+
+# Frontend: ignore everything except the configuration file
+/frontend/*
+!/frontend/default_config.json
+
+# Keep source and configuration directories tracked
+/src/
+/configs/
+/target
