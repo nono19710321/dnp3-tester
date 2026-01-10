@@ -41,9 +41,9 @@ __pycache__/
 *.md
 !README.md
 
-# Frontend: ignore everything except the configuration file
-/frontend/*
-!/frontend/default_config.json
+# Frontend: allow all frontend files to be tracked
+# /frontend/*
+# !/frontend/default_config.json
 
 # Keep configuration directory tracked (explicitly allow configs)
 !/configs/

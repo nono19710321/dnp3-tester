@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DNP3 Tools</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <!-- Top Navigation Bar -->
+    <header class="navbar">
+        <div class="nav-left">
+            <h1 class="logo">DNP3 TOOLS</h1>
+            <span class="version">IEEE 1815-2012 COMPLIANCE</span>
+        </div>
+        <div class="nav-center">
+            <!-- Mode indicator removed -->
+        </div>
+        <div class="nav-right">
+            <span class="brand">😊 Big GiantBaby 👍</span>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <div class="container">
+        <!-- Left Panel: Configuration -->
+        <aside class="panel config-panel">
+            <h2>CONFIGURATION</h2>
+            <!-- Config Form -->
+            <div class="form-group">
+                <label>Mode</label>
+                <select id="modeSelect" class="input-field">
+                    <option value="outstation">Outstation (Simulator)</option>
+                    <option value="master">Master (Debugger)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Connection Type</label>
+                <select id="connType" class="input-field">
+                    <option value="tcp_client">TCP Client</option>
+                    <option value="tcp_server">TCP Server</option>
+                    <option value="udp">UDP</option>
+                    <option value="serial">Serial (RS-232/485)</option>
+                    <option value="tls">TLS (Secure)</option>
+                </select>
+            </div>
+
+            <div id="tcpFields">
+                <div class="form-group">
+                    <label id="ipLabel">IP Address</label>
+                    <input type="text" id="ipAddress" class="input-field" value="" placeholder="Leave empty to bind 0.0.0.0 or use detected LAN IP">
+                </div>
+                <div class="form-group">
+                    <label id="portLabel">Port</label>
+                    <input type="number" id="port" class="input-field" value="20000" placeholder="Remote Port (20000)">
+                </div>
+            </div>
+
+            <div id="serialFields" style="display: none;">
+                <div class="form-group">
+                    <label>Serial Device</label>
+                    <select id="serialName" class="input-field">
+                        <option value="">-- Detect serial ports --</option>
+                    </select>
+                </div>
+
+                <!-- Row 1: Baud & Data -->
+                <div style="display: flex; gap: 8px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Baud Rate</label>
+                        <select id="baudRate" class="input-field">
+                            <option value="1200">1200</option>
+                            <option value="2400">2400</option>
+                            <option value="4800">4800</option>
+                            <option value="9600" selected>9600</option>
+                            <option value="19200">19200</option>
+                            <option value="38400">38400</option>
+                            <option value="57600">57600</option>
+                            <option value="115200">115200</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex: 1;">
+                        <label title="Data Bits">Data Bits</label>
+                        <select id="dataBits" class="input-field">
+                            <option value="8" selected>8</option>
+                            <option value="7">7</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Row 2: Parity & Stop -->
+                <div style="display: flex; gap: 8px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label title="Parity">Parity</label>
+                        <select id="parity" class="input-field">
+                            <option value="none" selected>None</option>
+                            <option value="even">Even</option>
+                            <option value="odd">Odd</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex: 1;">
+                        <label title="Stop Bits">Stop Bits</label>
+                        <select id="stopBits" class="input-field">
+                            <option value="1" selected>1</option>
+                            <option value="2">2</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Link Timeout (ms)</label>
+                <input type="number" id="linkTimeout" class="input-field" value="2000">
+            </div>
+
+            <div class="form-group">
+                <label>Local Address</label>
+                <input type="number" id="localAddr" class="input-field" value="10">
+            </div>
+            <div class="form-group">
+                <label>Remote Address</label>
+                <input type="number" id="remoteAddr" class="input-field" value="1">
+            </div>
+
+
+            <button id="actionBtn" class="btn-primary">CONNECT</button>
+
+            <!-- Master Controls (shown when Master mode is connected) -->
+            <div id="masterControls" style="display: none; margin-top: 12px;">
+                <button id="readBtn" class="btn btn-sm btn-primary" style="width: 100%;">📖 READ NOW</button>
+                <div class="form-group" style="margin-top: 8px;">
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input type="checkbox" id="autoPolling" checked style="margin-right: 8px;">
+                        <span>Auto Polling (5s)</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="status-box">
+                <div class="status-item">
+                    <span>Status:</span>
+                    <span id="connStatus" class="status-disconnected">DISCONNECTED</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Center Panel: Data Points -->
+        <main class="panel center-panel">
+            <div class="card">
+                <div class="card-header">
+                    <h2>DATA POINTS</h2>
+                    <div class="header-actions">
+                        <input type="file" id="configFileInput" accept=".json" style="display: none;">
+                        <button class="btn btn-sm btn-secondary" id="loadBtn">LOAD</button>
+                        <button class="btn btn-sm btn-primary" id="saveBtn">SAVE</button>
+                        <button class="btn btn-sm btn-success" id="addPointBtn">+ ADD</button>
+                        <button class="btn btn-sm btn-danger" id="clearPointsBtn">CLEAR</button>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table id="dataTable" class="data-table">
+                        <thead>
+                            <tr>
+                                <th>TYPE</th>
+                                <th>INDEX</th>
+                                <th>NAME</th>
+                                <th>VALUE</th>
+                                <th>QUALITY</th>
+                                <th>TIMESTAMP</th>
+                                <th>ACTIONS</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dataPointsTable">
+                            <!-- Data rows inserted by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+
+        <!-- Right Panel: Protocol Log -->
+        <aside class="panel log-panel">
+            <div class="card">
+                <div class="card-header">
+                    <div class="header-actions">
+                        <button id="logViewToggle" class="btn btn-sm btn-primary" onclick="toggleLogView()">
+                            📋 LOGS
+                        </button>
+                        <button class="btn btn-sm btn-secondary" onclick="clearLogs()">CLEAR</button>
+                    </div>
+                </div>
+                <!-- Log Container style moved to CSS -->
+                <div class="log-container">
+                    <!-- Simplified Logs View -->
+                    <div id="protocolLog" class="log-view"></div>
+
+                    <!-- Detailed Frames View (hidden by default) -->
+                    <div id="protocolFrames" class="log-view" style="display: none;"></div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="stat-item"><span class="stat-label">TX:</span><span id="statTx">0</span></div>
+        <div class="stat-item"><span class="stat-label">RX:</span><span id="statRx">0</span></div>
+        <div class="stat-item"><span class="stat-label">ERRORS:</span><span id="statErr">0</span></div>
+        <div class="stat-item"><span class="stat-label">UPTIME:</span><span id="statUptime">00:00:00</span></div>
+    </footer>
+
+    <!-- Control Modal -->
+    <div id="controlModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="controlTitle">Control Operation</h3>
+                <button class="modal-close-btn" onclick="closeControlModal()" title="Close">✕</button>
+            </div>
+            <div class="modal-body">
+                <label>Value:</label>
+                <input type="text" id="controlValue" class="input-field"
+                    placeholder="Enter value (e.g., ON/OFF for binary, or numeric value)">
+
+                <label>Operation Mode:</label>
+                <select id="controlMode" class="input-field" onchange="updateControlButtons()">
+                    <option value="DirectOperate">Direct Operate (0x05)</option>
+                    <option value="DirectOperateNoAck">Direct Operate No Ack (0x06)</option>
+                    <option value="SelectBeforeOperate">Select Before Operate (SBO 0x03+0x04)</option>
+                </select>
+            </div>
+            <div class="modal-footer">
+                <!-- Buttons for Direct Operate modes (05/06) - Only Operate button -->
+                <div id="directOperateButtons" class="control-button-group">
+                    <button class="btn btn-primary" onclick="submitDirectOperate()">Operate</button>
+                </div>
+
+                <!-- Buttons for SBO mode (03+04) - Select, Operate, Cancel -->
+                <div id="sboButtons" class="control-button-group" style="display: none;">
+                    <button class="btn btn-info" onclick="submitSelect()">Select</button>
+                    <button class="btn btn-success" onclick="submitOperate()">Operate</button>
+                    <button class="btn btn-danger" onclick="submitCancel()">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+    <script>
+        // Inline script functions for Modal (to ensure availability even if app.js loads late)
+        // Although app.js should define these.
+        // We will leave them to app.js which we updated earlier.
+    </script>
+</body>
+
+</html>
