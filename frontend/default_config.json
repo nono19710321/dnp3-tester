@@ -1,7 +1,7 @@
 {
   "binary_inputs": [
     {
-      "index": 10,
+      "index": 0,
       "name": "Abnormal Operator Settings",
       "description": "This flag shows that the operator has the ACR in an abnormal state such as “work tag applied”. This means that it will operate differently to its normal mode of operation."
     },

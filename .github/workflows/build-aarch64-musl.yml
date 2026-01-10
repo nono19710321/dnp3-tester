@@ -1,0 +1,35 @@
+name: Build aarch64-musl Release
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch: {}
+
+jobs:
+  build-aarch64-musl:
+    name: Build aarch64-unknown-linux-musl (static)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare artifacts dir
+        run: mkdir -p artifacts
+
+      - name: Build inside musl-cross docker (aarch64)
+        env:
+          CARGO_HOME: /cargo
+        run: |
+          # Use messense/rust-musl-cross image that contains musl toolchain for cross-building
+          docker run --rm -v "${{ github.workspace }}:/work" -w /work messense/rust-musl-cross:aarch64-1.70.0 bash -lc '
+            set -e
+            cargo build --target aarch64-unknown-linux-musl --release
+            mkdir -p /work/artifacts
+            cp target/aarch64-unknown-linux-musl/release/dnp3_tester /work/artifacts/dnp3_tester-aarch64-unknown-linux-musl
+          '
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dnp3_tester-aarch64-musl
+          path: artifacts/dnp3_tester-aarch64-unknown-linux-musl

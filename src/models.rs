@@ -100,6 +100,12 @@ pub struct Configuration {
     pub serial_port: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub baud_rate: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_bits: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_bits: Option<f32>,
 }
 
 impl Default for Configuration {
@@ -114,6 +120,9 @@ impl Default for Configuration {
             device_config: None,
             serial_port: None,
             baud_rate: Some(9600),
+            data_bits: None,
+            parity: None,
+            stop_bits: None,
         }
     }
 }

@@ -25,6 +25,22 @@ cargo build --release
 ./target/release/dnp3_tester
 ```
 
+### 生成 aarch64 静态（零依赖）可执行文件（GitHub Actions / Cross-build）
+
+推荐在 CI 中使用 musl-cross 镜像交叉编译以生成 `aarch64-unknown-linux-musl` 静态二进制。仓库包含一个 workflow `.github/workflows/build-aarch64-musl.yml`，会在 push 或手动触发时构建并上传 artifact。
+
+本地快速尝试（在 Linux 主机上）：
+
+```bash
+# 1) 安装目标（在本机安装 musl 工具链可能更复杂，推荐使用 CI 或 Docker）
+rustup target add aarch64-unknown-linux-musl
+
+# 2) 在支持 musl 的交叉环境中构建，例如使用 messense 的 musl-cross docker image:
+docker run --rm -v "$PWD":/work -w /work messense/rust-musl-cross:aarch64-1.70.0 bash -lc "cargo build --target aarch64-unknown-linux-musl --release && cp target/aarch64-unknown-linux-musl/release/dnp3_tester ./dnp3_tester-aarch64-musl"
+
+# 生成的文件: ./dnp3_tester-aarch64-musl
+```
+
 ## ✨ 功能特性
 
 ### 💻 双模式支持

@@ -1,5 +1,6 @@
 mod models;
 mod dnp3_service;
+mod serial_proxy;
 mod dnp3_frame_layer;
 
 use axum::{
@@ -17,6 +18,7 @@ use tokio::sync::RwLock;
 use tower_http::trace::TraceLayer;
 
 use models::*;
+use serial_proxy::{start_serial_proxy_server, start_serial_proxy_client};
 use dnp3_service::Dnp3Service;
 
 #[derive(RustEmbed)]
@@ -189,6 +191,7 @@ async fn main() {
         .route("/app.js", get(|| serve_asset("app.js")))
         .route("/default_config.json", get(|| serve_asset("default_config.json")))
         .route("/api/connect", post(connect_handler))
+        .route("/api/serial_ports", get(serial_ports_handler))
         .route("/api/disconnect", post(disconnect_handler))
         .route("/api/config/apply", post(apply_config_handler))
         .route("/api/data", get(get_data_handler))
@@ -274,6 +277,20 @@ struct ConnectRequest {
     local_addr: u16,
     #[serde(rename = "remoteAddr")]
     remote_addr: u16,
+    #[serde(rename = "connType", default)]
+    conn_type: Option<String>,
+    #[serde(rename = "serialName", default)]
+    serial_name: Option<String>,
+    #[serde(rename = "baudRate", default)]
+    baud_rate: Option<u32>,
+    #[serde(rename = "dataBits", default)]
+    data_bits: Option<u8>,
+    #[serde(default)]
+    parity: Option<String>,
+    #[serde(rename = "stopBits", default)]
+    stop_bits: Option<f32>,
+    #[serde(default)]
+    timeout: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -324,26 +341,53 @@ async fn connect_handler(
             }
         }
 
+        // Determine connection type: TCP by default, allow 'serial'
+        let conn_type = if let Some(ct) = &req.conn_type {
+            if ct == "serial" { ConnectionType::Serial } else if ct == "tcp_server" { ConnectionType::TcpServer } else if ct == "udp" { ConnectionType::Udp } else if ct == "tls" { ConnectionType::Tls } else { ConnectionType::TcpClient }
+        } else { ConnectionType::TcpClient };
+
+        // If serial mode requested, validate the physical serial port can be opened.
+        // Note: We no longer start TCP<->serial proxies here. The DNP3 service now handles serial directly.
+        if conn_type == ConnectionType::Serial {
+            let dev = req.serial_name.clone().unwrap_or_else(|| "".to_string());
+            let baud = req.baud_rate.unwrap_or(9600);
+
+            // Validate physical serial port can be opened before starting DNP3
+            match serial_proxy::try_open_serial(&dev, baud).await {
+                Ok(_) => {
+                    // Serial port is available, proceed with direct serial DNP3
+                    println!("✅ Serial port {} validated, proceeding with direct serial DNP3", dev);
+                }
+                Err(e) => {
+                    println!("⚠️ Serial open failed: {}", e);
+                    return Json(ApiResponse { success: false, error: Some(format!("Serial open failed: {}", e)) });
+                }
+            }
+        }
+
         let config = Configuration {
         role: if req.mode == "master" {
             DeviceRole::Master
         } else {
             DeviceRole::Outstation
         },
-        connection_type: ConnectionType::TcpClient,
+        connection_type: conn_type,
         ip_address,
         port: req.port,
         local_address: req.local_addr,
         remote_address: req.remote_addr,
         device_config: None,
-        serial_port: None,
-        baud_rate: None,
+        serial_port: req.serial_name.clone(),
+        baud_rate: req.baud_rate,
+        data_bits: req.data_bits,
+        parity: req.parity.clone(),
+        stop_bits: req.stop_bits,
     };
 
-    let result = match config.role {
-        DeviceRole::Master => service.start_master(&config).await,
-        DeviceRole::Outstation => service.start_outstation(&config).await,
-    };
+        let result = match config.role {
+            DeviceRole::Master => service.start_master(&config).await,
+            DeviceRole::Outstation => service.start_outstation(&config).await,
+        };
 
     match result {
         Ok(_) => Json(ApiResponse {
@@ -562,6 +606,77 @@ async fn host_ip_handler() -> Json<serde_json::Value> {
     // and read the local socket address. This does not send packets to the remote host.
     let ip = local_outbound_ip().unwrap_or_else(|| "".to_string());
     Json(serde_json::json!({ "ip": ip }))
+}
+
+async fn serial_ports_handler() -> Json<serde_json::Value> {
+    // Best-effort cross-platform serial port listing.
+    // On macOS: list /dev/cu.* and /dev/tty.*; on Linux: /dev/ttyUSB*, /dev/ttyACM*, /dev/ttyS*, /dev/ttyAMA*; on Windows use serialport::available_ports().
+    let mut ports: Vec<String> = Vec::new();
+
+    // Try to use serialport crate to get available ports (works on all platforms)
+    match tokio::task::spawn_blocking(|| serialport::available_ports()).await {
+        Ok(Ok(available_ports)) => {
+            // Successfully got available ports
+            for port in available_ports {
+                ports.push(port.port_name);
+            }
+        }
+        _ => {
+            // Fallback to filesystem enumeration if serialport fails
+            #[cfg(target_os = "macos")]
+            {
+                if let Ok(entries) = std::fs::read_dir("/dev") {
+                    for e in entries.flatten() {
+                        if let Ok(name) = e.file_name().into_string() {
+                            if name.starts_with("cu.") || name.starts_with("tty.") {
+                                ports.push(format!("/dev/{}", name));
+                            }
+                        }
+                    }
+                }
+            }
+            #[cfg(target_os = "linux")]
+            {
+                if let Ok(entries) = std::fs::read_dir("/dev") {
+                    for e in entries.flatten() {
+                        if let Ok(name) = e.file_name().into_string() {
+                            if name.starts_with("ttyUSB") || name.starts_with("ttyACM") || name.starts_with("ttyS") || name.starts_with("ttyAMA") {
+                                ports.push(format!("/dev/{}", name));
+                            }
+                        }
+                    }
+                }
+            }
+            #[cfg(target_os = "windows")]
+            {
+                // Fallback: Probe COM1..COM32 (only if serialport fails)
+                for i in 1..=32u8 {
+                    let com = format!("COM{}", i);
+                    ports.push(com);
+                }
+            }
+        }
+    }
+
+    // On Linux, also add filesystem enumeration results to ensure all ttyS* devices are included
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(entries) = std::fs::read_dir("/dev") {
+            for e in entries.flatten() {
+                if let Ok(name) = e.file_name().into_string() {
+                    let full_path = format!("/dev/{}", name);
+                    if (name.starts_with("ttyUSB") || name.starts_with("ttyACM") || name.starts_with("ttyS") || name.starts_with("ttyAMA")) && !ports.contains(&full_path) {
+                        ports.push(full_path);
+                    }
+                }
+            }
+        }
+    }
+
+    // Deduplicate and sort
+    ports.sort();
+    ports.dedup();
+    Json(serde_json::json!({ "ports": ports }))
 }
 
 fn local_outbound_ip() -> Option<String> {
