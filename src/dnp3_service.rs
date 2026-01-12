@@ -723,16 +723,18 @@ impl Dnp3Service {
         index: u16,
         value: f64,
         op_mode: String,
+        cmd_type: String, // New parameter: "Latch" or "Pulse"
     ) -> Result<String, String> {
         let mut assoc_guard = self.master_association.write().await;
         
         if let Some(ref mut assoc) = *assoc_guard {
             match point_type {
                 DataPointType::BinaryOutput => {
-                    let op_type = if value > 0.5 {
-                        OpType::LatchOn
+                    let op_type = if cmd_type == "Pulse" {
+                         if value > 0.5 { OpType::PulseOn } else { OpType::PulseOff }
                     } else {
-                        OpType::LatchOff
+                         // Default Latch
+                         if value > 0.5 { OpType::LatchOn } else { OpType::LatchOff }
                     };
                     
                     let command = Group12Var1::from_op_type(op_type);
@@ -1229,6 +1231,7 @@ impl OutstationControlHandler {
 
 impl ControlHandler for OutstationControlHandler {}
 
+// --- Binary Output Support ---
 impl ControlSupport<Group12Var1> for OutstationControlHandler {
     fn select(
         &mut self,
@@ -1237,31 +1240,39 @@ impl ControlSupport<Group12Var1> for OutstationControlHandler {
         _database: &mut DatabaseHandle,
     ) -> CommandStatus {
         let logs = self.logs.clone();
-        let value = if control.code.op_type == OpType::LatchOn { 1.0 } else { 0.0 };
         
+        let op_name = match control.code.op_type {
+            OpType::LatchOn => "LatchOn",
+            OpType::LatchOff => "LatchOff",
+            OpType::PulseOn => "PulseOn",
+            OpType::PulseOff => "PulseOff",
+            _ => "Unknown",
+        };
+
         tokio::spawn(async move {
             let mut log_queue = logs.write().await;
             if log_queue.len() >= 1000 { log_queue.pop_front(); }
             log_queue.push_back(ProtocolLogEntry {
                 id: 0,
                 timestamp: chrono::Utc::now(),
-                direction: "RX".to_string(),
-                message: format!("[FC=03 SELECT] BinaryOutput[{}] = {}", index, value),
+                direction: "RX".to_string(), 
+                message: format!("[FC=03 SELECT] BinaryOutput[{}] Op={}", index, op_name),
                 transaction_id: 0,
             });
             log_queue.push_back(ProtocolLogEntry {
                 id: 0,
                 timestamp: chrono::Utc::now(),
                 direction: "TX".to_string(),
-                message: "[FC=129] SELECT Success - Status: 0".to_string(),
+                message: "[FC=129] SELECT Success".to_string(),
                 transaction_id: 0,
             });
         });
-        
-        if index < 100 && (control.code.op_type == OpType::LatchOn || control.code.op_type == OpType::LatchOff) {
-            CommandStatus::Success
-        } else {
-            CommandStatus::NotSupported
+
+        // Accept LatchOn, LatchOff, PulseOn, PulseOff.
+        // We removed the `index < 100` check to support user-defined points.
+        match control.code.op_type {
+            OpType::LatchOn | OpType::LatchOff | OpType::PulseOn | OpType::PulseOff => CommandStatus::Success,
+            _ => CommandStatus::NotSupported,
         }
     }
 
@@ -1272,7 +1283,13 @@ impl ControlSupport<Group12Var1> for OutstationControlHandler {
         _op_type: OperateType,
         database: &mut DatabaseHandle,
     ) -> CommandStatus {
-        let status = control.code.op_type == OpType::LatchOn;
+        // Determine status based on OpType
+        // LatchOn/PulseOn -> true (Active/Close)
+        // LatchOff/PulseOff -> false (Inactive/Trip)
+        let status = match control.code.op_type {
+            OpType::LatchOn | OpType::PulseOn => true,
+            _ => false,
+        };
         let value = if status { 1.0 } else { 0.0 };
         
         // Update database
@@ -1303,6 +1320,14 @@ impl ControlSupport<Group12Var1> for OutstationControlHandler {
         
         // Log
         let logs = self.logs.clone();
+        let op_name = match control.code.op_type {
+            OpType::LatchOn => "LatchOn",
+            OpType::LatchOff => "LatchOff",
+            OpType::PulseOn => "PulseOn",
+            OpType::PulseOff => "PulseOff",
+            _ => "Unknown",
+        };
+
         tokio::spawn(async move {
             let mut log_queue = logs.write().await;
             if log_queue.len() >= 1000 { log_queue.pop_front(); }
@@ -1310,14 +1335,14 @@ impl ControlSupport<Group12Var1> for OutstationControlHandler {
                 id: 0,
                 timestamp: chrono::Utc::now(),
                 direction: "RX".to_string(),
-                message: format!("[FC=04 OPERATE] BinaryOutput[{}] = {}", index, value),
+                message: format!("[FC=04 OPERATE] BinaryOutput[{}] {} -> {}", index, op_name, value),
                 transaction_id: 0,
             });
             log_queue.push_back(ProtocolLogEntry {
                 id: 0,
                 timestamp: chrono::Utc::now(),
                 direction: "TX".to_string(),
-                message: "[FC=129] OPERATE Success - Status: 0".to_string(),
+                message: "[FC=129] OPERATE Success".to_string(),
                 transaction_id: 0,
             });
         });
@@ -1326,18 +1351,17 @@ impl ControlSupport<Group12Var1> for OutstationControlHandler {
     }
 }
 
+// --- Analog Output Support ---
+
 impl ControlSupport<Group41Var1> for OutstationControlHandler {
     fn select(
         &mut self,
         _control: Group41Var1,
-        index: u16,
+        _index: u16,
         _database: &mut DatabaseHandle,
     ) -> CommandStatus {
-        if index < 100 {
-            CommandStatus::Success
-        } else {
-            CommandStatus::NotSupported
-        }
+        // Always accept selection for Analog Outputs, regardless of index
+        CommandStatus::Success
     }
 
     fn operate(
@@ -1380,14 +1404,14 @@ impl ControlSupport<Group41Var1> for OutstationControlHandler {
                 id: 0,
                 timestamp: chrono::Utc::now(),
                 direction: "RX".to_string(),
-                message: format!("[FC=04 OPERATE] AnalogOutput[{}] = {}", index, value),
+                message: format!("[FC=04 OPERATE] AnalogOutput[Int32][{}] = {}", index, value),
                 transaction_id: 0,
             });
             log_queue.push_back(ProtocolLogEntry {
                 id: 0,
                 timestamp: chrono::Utc::now(),
                 direction: "TX".to_string(),
-                message: "[FC=129] OPERATE Success - Status: 0".to_string(),
+                message: "[FC=129] OPERATE Success".to_string(),
                 transaction_id: 0,
             });
         });
@@ -1396,10 +1420,9 @@ impl ControlSupport<Group41Var1> for OutstationControlHandler {
     }
 }
 
-// Implement other Group41 variants
 impl ControlSupport<Group41Var2> for OutstationControlHandler {
-    fn select(&mut self, _control: Group41Var2, index: u16, _database: &mut DatabaseHandle) -> CommandStatus {
-        if index < 100 { CommandStatus::Success } else { CommandStatus::NotSupported }
+    fn select(&mut self, _control: Group41Var2, _index: u16, _database: &mut DatabaseHandle) -> CommandStatus {
+        CommandStatus::Success
     }
     
     fn operate(&mut self, control: Group41Var2, index: u16, _op_type: OperateType, database: &mut DatabaseHandle) -> CommandStatus {
@@ -1407,13 +1430,23 @@ impl ControlSupport<Group41Var2> for OutstationControlHandler {
         database.transaction(|db| {
             db.update(index, &AnalogOutputStatus::new(value as f64, Flags::ONLINE, Time::synchronized(chrono::Utc::now().timestamp_millis().try_into().unwrap())), UpdateOptions::detect_event());
         });
+        
+        // Sync to internal state (simplified compared to Var1 for brevity, but same logic applies)
+        let points = self.data_points.clone();
+        tokio::spawn(async move {
+            let mut pts = points.write().await;
+            if let Some(point) = pts.iter_mut().find(|p| p.point_type == DataPointType::AnalogOutput && p.index == index) {
+                point.value = value as f64;
+            }
+        });
+
         CommandStatus::Success
     }
 }
 
 impl ControlSupport<Group41Var3> for OutstationControlHandler {
-    fn select(&mut self, _control: Group41Var3, index: u16, _database: &mut DatabaseHandle) -> CommandStatus {
-        if index < 100 { CommandStatus::Success } else { CommandStatus::NotSupported }
+    fn select(&mut self, _control: Group41Var3, _index: u16, _database: &mut DatabaseHandle) -> CommandStatus {
+        CommandStatus::Success
     }
     
     fn operate(&mut self, control: Group41Var3, index: u16, _op_type: OperateType, database: &mut DatabaseHandle) -> CommandStatus {
@@ -1421,19 +1454,34 @@ impl ControlSupport<Group41Var3> for OutstationControlHandler {
         database.transaction(|db| {
             db.update(index, &AnalogOutputStatus::new(value as f64, Flags::ONLINE, Time::synchronized(chrono::Utc::now().timestamp_millis().try_into().unwrap())), UpdateOptions::detect_event());
         });
+        let points = self.data_points.clone();
+        tokio::spawn(async move {
+            let mut pts = points.write().await;
+            if let Some(point) = pts.iter_mut().find(|p| p.point_type == DataPointType::AnalogOutput && p.index == index) {
+                point.value = value as f64;
+            }
+        });
         CommandStatus::Success
     }
 }
 
 impl ControlSupport<Group41Var4> for OutstationControlHandler {
-    fn select(&mut self, _control: Group41Var4, index: u16, _database: &mut DatabaseHandle) -> CommandStatus {
-        if index < 100 { CommandStatus::Success } else { CommandStatus::NotSupported }
+    fn select(&mut self, _control: Group41Var4, _index: u16, _database: &mut DatabaseHandle) -> CommandStatus {
+        CommandStatus::Success
     }
     
     fn operate(&mut self, control: Group41Var4, index: u16, _op_type: OperateType, database: &mut DatabaseHandle) -> CommandStatus {
         let value = control.value;
         database.transaction(|db| {
             db.update(index, &AnalogOutputStatus::new(value as f64, Flags::ONLINE, Time::synchronized(chrono::Utc::now().timestamp_millis().try_into().unwrap())), UpdateOptions::detect_event());
+        });
+        
+         let points = self.data_points.clone();
+        tokio::spawn(async move {
+            let mut pts = points.write().await;
+            if let Some(point) = pts.iter_mut().find(|p| p.point_type == DataPointType::AnalogOutput && p.index == index) {
+                point.value = value as f64;
+            }
         });
         CommandStatus::Success
     }

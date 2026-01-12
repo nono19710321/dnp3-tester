@@ -17,6 +17,17 @@ use std::collections::HashMap;
 use tokio::sync::RwLock;
 use tower_http::trace::TraceLayer;
 
+// Native Webview Imports
+use tao::{
+    event::{Event, WindowEvent},
+    event_loop::{ControlFlow, EventLoop},
+    window::WindowBuilder,
+    dpi::LogicalSize,
+};
+use wry::WebViewBuilder;
+use std::thread;
+use std::sync::mpsc;
+
 use models::*;
 use serial_proxy::{start_serial_proxy_server, start_serial_proxy_client};
 use dnp3_service::Dnp3Service;
@@ -40,7 +51,6 @@ fn get_session_id(headers: &HeaderMap) -> String {
         .to_string()
 }
 
-
 // Helper to get/create service for session
 async fn get_service(state: &AppState, session_id: &str) -> Arc<Dnp3Service> {
     let mut sessions = state.sessions.write().await;
@@ -55,78 +65,54 @@ async fn get_service(state: &AppState, session_id: &str) -> Arc<Dnp3Service> {
     service
 }
 
-// Open browser in app mode (no address bar/toolbar)
-fn open_browser_app_mode(url: &str) {
-    #[cfg(target_os = "windows")]
-    {
-        // Windows: Try Chrome, Edge, Firefox in app mode
-        let chrome_paths = [
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        ];
-        
-        let edge_path = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe";
-        
-        // Try Chrome first
-        for chrome in &chrome_paths {
-            if std::path::Path::new(chrome).exists() {
-                if let Ok(_) = std::process::Command::new(chrome)
-                    .arg(format!("--app={}", url))
-                    .spawn() {
-                    return;
-                }
-            }
+fn main() {
+    // 1. Create Event Loop (Must be on main thread for macOS)
+    let event_loop = EventLoop::new();
+
+    // 2. Create Window
+    let window = WindowBuilder::new()
+        .with_title("DNP3 Tester")
+        .with_inner_size(LogicalSize::new(1280.0, 800.0))
+        .build(&event_loop)
+        .unwrap();
+
+    // 3. Spawn Tokio Server in Background Thread
+    let (tx, rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async move {
+            run_server(tx).await;
+        });
+    });
+
+    // 4. Wait for server to start and get port
+    let port = rx.recv().expect("Failed to receive port from server");
+    let url = format!("http://127.0.0.1:{}", port);
+    println!("🖥️ WebView Loading: {}", url);
+
+    // 5. Create WebView
+    let _webview = WebViewBuilder::new()
+        .with_url(&url)
+        .with_devtools(true) // Enable devtools
+        .build(&window)
+        .unwrap();
+
+    // 6. Run Event Loop
+    event_loop.run(move |event, _, control_flow| {
+        *control_flow = ControlFlow::Wait;
+
+        match event {
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => *control_flow = ControlFlow::Exit,
+            _ => (),
         }
-        
-        // Try Edge
-        if std::path::Path::new(edge_path).exists() {
-            if let Ok(_) = std::process::Command::new(edge_path)
-                .arg(format!("--app={}", url))
-                .spawn() {
-                return;
-            }
-        }
-        
-        // Fallback to default browser
-        let _ = open::that(url);
-    }
-    
-    #[cfg(target_os = "macos")]
-    {
-        // macOS: Try Chrome, then Safari in app-like mode
-        if let Ok(_) = std::process::Command::new("open")
-            .arg("-a")
-            .arg("Google Chrome")
-            .arg("--args")
-            .arg(format!("--app={}", url))
-            .spawn() {
-            return;
-        }
-        
-        // Fallback to default browser
-        let _ = open::that(url);
-    }
-    
-    #[cfg(target_os = "linux")]
-    {
-        // Linux: Try Chrome/Chromium in app mode
-        let browsers = ["google-chrome", "chromium", "chromium-browser"];
-        
-        for browser in &browsers {
-            if let Ok(_) = std::process::Command::new(browser)
-                .arg(format!("--app={}", url))
-                .spawn() {
-                return;
-            }
-        }
-        
-        // Fallback to default browser
-        let _ = open::that(url);
-    }
+    });
 }
 
-#[tokio::main]
-async fn main() {
+async fn run_server(tx: mpsc::Sender<u16>) {
     // Initialize LogStore (Shared Global)
     let log_store = Arc::new(dnp3_service::LogStore::new());
     
@@ -145,7 +131,6 @@ async fn main() {
     );
     
     // Set up tracing subscriber with EnvFilter and our custom layer
-    // Use EnvFilter - dnp3=trace to see raw hex frames
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,dnp3=trace"));
     
@@ -160,11 +145,7 @@ async fn main() {
 
     let state = AppState { sessions, log_store };
 
-    // Auto-apply disk `default_config.json` to the built-in `default` session
-    // so the outstation has a point table even if no browser session applied it.
-    // This reads from the current working directory first (executable run dir),
-    // then falls back to frontend/default_config.json.
-    // Try reading default_config.json from CWD, then frontend/ if absent
+    // Auto-apply disk `default_config.json` logic using tokio::fs
     let cfg_text = match tokio::fs::read_to_string("default_config.json").await {
         Ok(s) => Some(s),
         Err(_) => match tokio::fs::read_to_string("frontend/default_config.json").await {
@@ -196,26 +177,25 @@ async fn main() {
         .route("/api/config/apply", post(apply_config_handler))
         .route("/api/data", get(get_data_handler))
         .route("/api/logs", get(get_logs_handler))
-        .route("/api/frames", get(get_frames_handler)) // NEW: Raw frames
+        .route("/api/frames", get(get_frames_handler))
         .route("/api/host_ip", get(host_ip_handler))
-        .route("/api/read", post(read_handler)) // Manual read for Master
+        .route("/api/read", post(read_handler))
         .route("/api/control", post(control_handler))
-        .route("/api/datapoints/add", post(add_datapoint_handler)) // NEW: Add data point
-        .route("/api/datapoints/clear", post(clear_datapoints_handler)) // NEW: Clear all
+        .route("/api/datapoints/add", post(add_datapoint_handler))
+        .route("/api/datapoints/clear", post(clear_datapoints_handler))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 
-    let addr = "127.0.0.1:8080";
-    println!("\n🚀 DNP3 Tester starting at http://{}\n", addr);
-    println!("📡 IEEE 1815-2012 Compliant");
-    println!("🔧 Supports: TCP | UDP | TLS | Serial\n");
-
-    // Auto-open browser in app mode (no address bar/toolbar)
-    let url = format!("http://{}", addr);
-    open_browser_app_mode(&url);
+    // Bind to random free port
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    
+    println!("\n🚀 DNP3 Tester Internal Server on port {}\n", port);
+    
+    // Notify main thread
+    tx.send(port).unwrap();
 
     // Start server
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -520,6 +500,8 @@ struct ControlRequest {
     value: f64,
     #[serde(default)]
     op_mode: String,
+    #[serde(default)]
+    command_type: Option<String>, // "Latch" or "Pulse"
 }
 
 #[derive(Serialize)]
@@ -535,8 +517,11 @@ async fn control_handler(
 ) -> Json<ControlResponse> {
     let session_id = get_session_id(&headers);
     let service = get_service(&state, &session_id).await;
+    
+    // Default to Latch if not specified
+    let cmd_type = req.command_type.unwrap_or_else(|| "Latch".to_string());
 
-    println!("🎮 Control Request [Session {}]: {}[{}], Val={}, Mode={}", session_id, req.point_type, req.index, req.value, req.op_mode);
+    println!("🎮 Control Request [Session {}]: {}[{}], Val={}, Mode={}, Type={}", session_id, req.point_type, req.index, req.value, req.op_mode, cmd_type);
     
     // Parse point type
     let point_type = match req.point_type.as_str() {
@@ -551,7 +536,7 @@ async fn control_handler(
     };
     
     // Execute control through DNP3
-    let result = service.execute_control(point_type, req.index, req.value, req.op_mode).await;
+    let result = service.execute_control(point_type, req.index, req.value, req.op_mode, cmd_type).await;
     
     match result {
         Ok(msg) => Json(ControlResponse {

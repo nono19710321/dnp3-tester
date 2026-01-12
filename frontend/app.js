@@ -81,38 +81,38 @@ async function fetchSerialPorts() {
             sel.innerHTML = '<option value="">-- No serial ports --</option>';
             return;
         }
-                // Reorder ports: USB devices first, then non-Bluetooth cu.*, then others, Bluetooth last
-                const usbPorts = [];
-                const nonBtCu = [];
-                const btPorts = [];
-                const others = [];
-                for (const p of ports) {
-                    const lower = p.toLowerCase();
-                    if (lower.includes('usbserial') || lower.includes('tty.usb') || /ttyusb/i.test(p) || /usb/i.test(lower)) {
-                        usbPorts.push(p);
-                    } else if (p.includes('cu.') && !p.includes('BLTH') && !lower.includes('bluetooth')) {
-                        nonBtCu.push(p);
-                    } else if (p.includes('BLTH') || lower.includes('bluetooth')) {
-                        btPorts.push(p);
-                    } else {
-                        others.push(p);
-                    }
-                }
+        // Reorder ports: USB devices first, then non-Bluetooth cu.*, then others, Bluetooth last
+        const usbPorts = [];
+        const nonBtCu = [];
+        const btPorts = [];
+        const others = [];
+        for (const p of ports) {
+            const lower = p.toLowerCase();
+            if (lower.includes('usbserial') || lower.includes('tty.usb') || /ttyusb/i.test(p) || /usb/i.test(lower)) {
+                usbPorts.push(p);
+            } else if (p.includes('cu.') && !p.includes('BLTH') && !lower.includes('bluetooth')) {
+                nonBtCu.push(p);
+            } else if (p.includes('BLTH') || lower.includes('bluetooth')) {
+                btPorts.push(p);
+            } else {
+                others.push(p);
+            }
+        }
 
-                const ordered = [].concat(usbPorts, nonBtCu, others, btPorts);
+        const ordered = [].concat(usbPorts, nonBtCu, others, btPorts);
 
-                // Populate select in preferred order and auto-select the first USB (if any)
-                for (const p of ordered) {
-                    const opt = document.createElement('option');
-                    opt.value = p;
-                    opt.text = p;
-                    sel.appendChild(opt);
-                }
+        // Populate select in preferred order and auto-select the first USB (if any)
+        for (const p of ordered) {
+            const opt = document.createElement('option');
+            opt.value = p;
+            opt.text = p;
+            sel.appendChild(opt);
+        }
 
-                if (ordered.length > 0) {
-                    // If a USB port exists, it will be at index 0 due to ordering
-                    sel.value = ordered[0];
-                }
+        if (ordered.length > 0) {
+            // If a USB port exists, it will be at index 0 due to ordering
+            sel.value = ordered[0];
+        }
     } catch (e) {
         sel.innerHTML = '<option value="">-- Error detecting ports --</option>';
         console.error('Serial discovery failed', e);
@@ -493,6 +493,11 @@ function renderConfigTable(config) {
     const tbody = document.getElementById('dataPointsTable');
     if (!tbody) return;
     tbody.innerHTML = '';
+
+    // Ensure Actions Header is visible in Config Mode (Restored if hidden by Live mode)
+    const actionsHeader = document.querySelector('#dataTable th:last-child');
+    if (actionsHeader) actionsHeader.style.display = '';
+
     const groups = [
         { data: config.binary_inputs, type: 'BinaryInput' },
         { data: config.binary_outputs, type: 'BinaryOutput' },
@@ -514,6 +519,16 @@ function renderLiveTable(points) {
     const tbody = document.getElementById('dataPointsTable');
     if (!tbody) return;
     tbody.innerHTML = '';
+
+    const mode = document.getElementById('modeSelect').value;
+    const isMaster = (mode === 'master');
+
+    // Toggle Actions Column Header based on mode
+    const actionsHeader = document.querySelector('#dataTable th:last-child');
+    if (actionsHeader) {
+        actionsHeader.style.display = isMaster ? '' : 'none';
+    }
+
     points.forEach(point => {
         const tr = document.createElement('tr');
         let valClass = 'badge-neutral';
@@ -524,19 +539,21 @@ function renderLiveTable(points) {
             const boolVal = (point.value > 0.5);
             displayValue = boolVal ? 'ON' : 'OFF';
             valClass = boolVal ? 'badge-success' : 'badge-danger';
-            if (point.type.includes('Output')) actionBtn = `<button class="btn btn-sm btn-primary" onclick="openControl(${point.index}, '${point.type}')">Control</button>`;
+            if (isMaster && point.type.includes('Output')) actionBtn = `<button class="btn btn-sm btn-primary" onclick="openControl(${point.index}, '${point.type}')">Control</button>`;
         } else if (point.type.includes('Analog')) {
             displayValue = parseFloat(point.value).toFixed(2);
             if (point.name.toLowerCase().includes('voltage')) displayValue += ' V';
             else if (point.name.toLowerCase().includes('current')) displayValue += ' A';
             valClass = 'badge-info';
-            if (point.type.includes('Output')) actionBtn = `<button class="btn btn-sm btn-primary" onclick="openControl(${point.index}, '${point.type}')">Set</button>`;
+            if (isMaster && point.type.includes('Output')) actionBtn = `<button class="btn btn-sm btn-primary" onclick="openControl(${point.index}, '${point.type}')">Set</button>`;
         } else if (point.type === 'Counter') {
             displayValue = parseInt(point.value);
             valClass = 'badge-primary';
         }
 
-        tr.innerHTML = `<td>${point.type}</td><td>${point.index}</td><td>${point.name}</td><td><span class="badge ${valClass}">${displayValue}</span></td><td>${point.quality || 'ONLINE'}</td><td>${point.timestamp ? new Date(point.timestamp).toLocaleTimeString() : ''}</td><td>${actionBtn}</td>`;
+        const actionsCell = isMaster ? `<td>${actionBtn}</td>` : `<td style="display: none;"></td>`;
+
+        tr.innerHTML = `<td>${point.type}</td><td>${point.index}</td><td>${point.name}</td><td><span class="badge ${valClass}">${displayValue}</span></td><td>${point.quality || 'ONLINE'}</td><td>${point.timestamp ? new Date(point.timestamp).toLocaleTimeString() : ''}</td>${actionsCell}`;
         tbody.appendChild(tr);
     });
 }
@@ -746,6 +763,35 @@ window.openControl = function (index, type) {
     const modeSelect = document.getElementById('controlMode');
     modeSelect.innerHTML = `<option value="DirectOperate">Direct Operate (0x05)</option><option value="DirectOperateNoAck">Direct Operate No Ack (0x06)</option><option value="SelectBeforeOperate">Select Before Operate (SBO 0x03+0x04)</option>`;
 
+    // Inject OpType Select for BinaryOutput
+    // We assume there's a container div id='controlOpTypeContainer' in the HTML, OR we append it.
+    // Since we can't easily change static HTML here effectively without seeing it, let's look for a placeholder or insert after controlMode.
+    // Actually, let's check if we already have it or create it.
+
+    let opTypeContainer = document.getElementById('opTypeContainer');
+    if (!opTypeContainer) {
+        // Create container if missing (hacky but works for keeping single file logic)
+        opTypeContainer = document.createElement('div');
+        opTypeContainer.id = 'opTypeContainer';
+        opTypeContainer.className = 'form-group';
+        // Insert after mode select container
+        modeSelect.parentNode.parentNode.insertBefore(opTypeContainer, modeSelect.parentNode.nextSibling);
+    }
+
+    if (type === 'BinaryOutput') {
+        opTypeContainer.style.display = 'block';
+        opTypeContainer.innerHTML = `
+            <label>Operation Type</label>
+            <select id="controlOpType" class="input-field">
+                <option value="Latch">Latch (On/Off)</option>
+                <option value="Pulse">Pulse (Trip/Close)</option>
+            </select>
+        `;
+    } else {
+        opTypeContainer.style.display = 'none';
+        opTypeContainer.innerHTML = ''; // clear to avoid submitting stale values
+    }
+
     // Set default to Direct Operate and update buttons
     modeSelect.value = 'DirectOperate';
     updateControlButtons();
@@ -810,22 +856,23 @@ window.submitDirectOperate = async function () {
     if (!currentControlPoint) return;
 
     const valueStr = document.getElementById('controlValue').value;
-    if (!valueStr) {
-        alert("Please enter a value");
-        return;
-    }
-
+    const opTypeSelect = document.getElementById('controlOpType'); // New dropdown
     const modeSelect = document.getElementById('controlMode').value;
 
-    // Map frontend mode to backend op_mode
-    let mode = 'Direct';  // Default: 0x05
-    if (modeSelect === 'DirectOperateNoAck') mode = 'DirectNoAck'; // 0x06
+    // Use selected OpType (Latch/Pulse) or default to Latch if hidden
+    let opType = opTypeSelect && opTypeSelect.value ? opTypeSelect.value : 'Latch'; // 'Latch' or 'Pulse'
 
-    let value = parseFloat(valueStr);
-    if (currentControlPoint.type.includes('Binary')) {
-        if (valueStr.toLowerCase() === 'on' || valueStr.toLowerCase() === 'true' || valueStr === '1') value = 1.0;
-        else value = 0.0;
+    // Determine value (On/Off)
+    // For Pulse, we usually just "Pulse On" (Trip/Close). Pulse Off is rare but possible.
+    // Let's assume input text "On"/"1" = On, "Off"/"0" = Off.
+    let isOn = false;
+    if (valueStr.toLowerCase() === 'on' || valueStr.toLowerCase() === 'true' || valueStr === '1' || valueStr.toLowerCase() === 'pulse') {
+        isOn = true;
     }
+
+    // Map frontend mode to backend op_mode
+    let mode = 'Direct';
+    if (modeSelect === 'DirectOperateNoAck') mode = 'DirectNoAck';
 
     try {
         const response = await fetch('/api/control', {
@@ -834,13 +881,14 @@ window.submitDirectOperate = async function () {
             body: JSON.stringify({
                 point_type: currentControlPoint.type,
                 index: parseInt(currentControlPoint.index),
-                value: value,
-                op_mode: mode  // "Direct" or "DirectNoAck"
+                value: isOn ? 1.0 : 0.0,
+                op_mode: mode,
+                command_type: opType // New field: Latch or Pulse
             })
         });
         const res = await response.json();
         if (res.status === 'success') {
-            addLog("System", `✓ ${mode} (FC ${mode === 'DirectNoAck' ? '0x06' : '0x05'}) executed`);
+            addLog("System", `✓ ${mode} ${opType} ${isOn ? 'On' : 'Off'} executed`);
             closeControlModal();
         } else {
             addLog("Error", `✗ Control Failed: ${res.message}`);

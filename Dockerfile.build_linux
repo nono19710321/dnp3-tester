@@ -1,0 +1,25 @@
+# 使用官方 Rust 镜像 (您的 M1/M2 Mac 会自动拉取 linux/arm64 版本)
+FROM rust:bookworm
+
+# 更新软件源并安装 Linux GUI 开发所需的依赖库
+# wry/tao 需要 GTK3, WebKit2GTK, 和相关依赖
+RUN apt-get update && apt-get install -y \
+    libwebkit2gtk-4.0-dev \
+    build-essential \
+    curl \
+    wget \
+    file \
+    libssl-dev \
+    libgtk-3-dev \
+    libayatana-appindicator3-dev \
+    librsvg2-dev
+
+# 创建工作目录
+WORKDIR /usr/src/app
+
+# 复制当前项目代码到容器中
+COPY . .
+
+# 编译 Release 版本
+# 注意：我们构建的是标准的 linux-gnu 版本，而不是 musl，因为 GUI 库很难静态链接
+RUN cargo build --release
