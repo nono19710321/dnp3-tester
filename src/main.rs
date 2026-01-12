@@ -24,7 +24,7 @@ use tao::{
     window::WindowBuilder,
     dpi::LogicalSize,
 };
-use wry::WebViewBuilder;
+use wry::webview::WebViewBuilder;
 use std::thread;
 use std::sync::mpsc;
 
@@ -92,10 +92,12 @@ fn main() {
     println!("🖥️ WebView Loading: {}", url);
 
     // 5. Create WebView
-    let _webview = WebViewBuilder::new()
+    let _webview = WebViewBuilder::new(window)
+        .unwrap()
         .with_url(&url)
-        .with_devtools(true) // Enable devtools
-        .build(&window)
+        .unwrap()
+        .with_devtools(true)
+        .build()
         .unwrap();
 
     // 6. Run Event Loop

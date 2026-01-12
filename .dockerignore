@@ -1,0 +1,11 @@
+target
+.git
+.venv
+.DS_Store
+Cargo.lock
+.cargo
+release-windows
+resources.o
+resources.rc
+*.ico
+*.png

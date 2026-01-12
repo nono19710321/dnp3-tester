@@ -37,8 +37,10 @@ fastrand = "2.0"
 tokio-serial = "5.4"
 serialport = "4.7"
 anyhow = "1.0"
-wry = "0.53.5"
-tao = "0.34.5"
+wry = "0.24.3"
+tao = "0.16.2"
+
+
 
 [profile.release]
 opt-level = 3
